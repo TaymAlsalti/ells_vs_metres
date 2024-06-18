@@ -6,7 +6,7 @@ output:
     toc_float: true
 ---
 
-```{r setup, message = T}
+```{r setup, message = FALSE}
 knitr::opts_chunk$set(
     message = FALSE,
     warning = TRUE,
@@ -14,10 +14,7 @@ knitr::opts_chunk$set(
     error = TRUE
 )
 
-
-groundhog::groundhog.library(c("tidyverse"), 
-                             tolerate.R.version='4.3.3', # version on local machine
-                             date = "2022-06-14") # older date to accommodate older R version on the R server
+library(tidyverse)
 
 
 options(digits = 4, scipen = 999)
