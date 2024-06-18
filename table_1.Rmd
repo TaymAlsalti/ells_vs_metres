@@ -1,0 +1,69 @@
+---
+title: "Table 1"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, message = T}
+knitr::opts_chunk$set(
+    message = FALSE,
+    warning = TRUE,
+    include = TRUE,
+    error = TRUE
+)
+
+
+groundhog::groundhog.library(c("tidyverse"), 
+                             tolerate.R.version='4.3.3', # version on local machine
+                             date = "2022-06-14") # older date to accommodate older R version on the R server
+
+
+options(digits = 4, scipen = 999)
+```
+
+
+```{r}
+
+
+set.seed(810)
+N <- 1000000
+pop <- tibble(
+  con = rnorm(N, 5, 2),
+  sex = rbinom(N, 1, 0.5),
+  soc = rnorm(N, 5, 2) + con + 2*sex,
+)
+
+
+
+# 3. Create a Random Sample
+random_sample <- sample_n(pop, 140)
+
+# 4. Create a Biased Sample (skews overeducated/conscientious)
+high_con_sample <- pop %>% filter(con > 4) %>% sample_n(140)
+
+
+
+old_table1 <- tribble(
+  ~Sample,       ~Measure,                 ~Mean,                          ~SD,
+  "Random",      "concientiousness",       mean(random_sample$con) ,         sd(random_sample$con),     
+  "Random",      "pro sociality",          mean(random_sample$soc),         sd(random_sample$soc),
+  "Biassed",     "concientiousness",       mean(high_con_sample$con) ,         sd(high_con_sample$con),     
+  "Biassed",     "pro sociality",          mean(high_con_sample$soc),         sd(high_con_sample$soc)
+)
+
+new_table1 <- old_table1 %>% 
+  bind_cols(tribble(
+  ~"Normed mean",                                             ~"Normed SD",
+   (mean(random_sample$con) -   mean(pop$con)) / sd(pop$con),  sd(random_sample$con) /   sd(pop$con),     
+   (mean(random_sample$soc) -   mean(pop$soc)) / sd(pop$soc),  sd(random_sample$soc) /   sd(pop$soc),     
+   (mean(high_con_sample$con) - mean(pop$con)) / sd(pop$con),  sd(high_con_sample$con) / sd(pop$con),     
+   (mean(high_con_sample$soc) - mean(pop$soc)) / sd(pop$soc),  sd(high_con_sample$soc) / sd(pop$soc)      
+))
+
+old_table1
+
+new_table1 
+
+```

@@ -1,0 +1,628 @@
+---
+title: "disattenuation vs. norm standardised regression slope"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, message = FALSE}
+knitr::opts_chunk$set(
+    message = FALSE,
+    warning = TRUE,
+    include = TRUE,
+    error = TRUE
+)
+
+
+groundhog::groundhog.library(c("tidyverse", "faux", "furrr"), 
+                             date = "2022-06-14") # older date to accomodate older R version on the R cluster
+
+
+
+options(digits = 4, scipen = 999)
+theme_set(theme_bw(base_size = 12))
+```
+
+
+## Set up 
+
+### simulation parameters
+```{r}
+Scenarios = expand_grid(
+    # norm sample size
+    N_norm = c(50, 100, 250, 500, 1000),
+    # local sample size
+    N = c(25, 100, 175, 250, 500),
+    # population correlation
+    roh = c(.1, .3, .5, .7),
+    # degree of sample selection: above average, half an sd above average, an sd above average (stanine scale)
+    selection = c(-999, 5, 6, 7),
+    # Simulate each scenario 1000 times
+    Simulation = 1:1000)
+
+generate_data_and_calculate_r <- function(N_norm, N, roh, selection,
+                                        Simulation) {
+  
+  # Store scenario's parameters
+  Parameters <- environment() %>% as.list() %>% as_tibble()
+  
+  # function for calculating disattenuated r
+  r_disattenuated <- function(x, y, sd_x) {
+  
+  r_obs <- cor(x,y)
+  u_x <- sd(x)/sd_x
+
+ r_obs/(u_x*sqrt(((1/u_x^2)-1)*r_obs^2+1))
+  }
+  
+  # function for calculating regression slope, equivalent to pop/norm standardisation since both sds = 1
+  b <- function(x, y) {
+
+  N <- length(x)
+
+ (N * sum(x * y) - sum(x) * sum(y)) / (N * sum(x^2) - sum(x)^2)
+  }
+  
+  
+  b_normed <- function(x, y, sd_x, sd_y) {
+
+  N <- length(x)
+  normed_x <- x/sd_x
+  normed_y <- y/sd_y
+  
+
+ (N * sum(normed_x * normed_y) - sum(normed_x) * sum(normed_y)) / (N * sum(normed_x^2) - sum(normed_x)^2)
+  }
+  
+  
+  # Generate Dataset
+
+    # N draws from a bivariate normal distribution with means = 0, SDs = 1 and correlations as above
+    x_y <- rnorm_multi(n = 10000, vars = 2, mu = c(5, 5), sd = c(2, 2), r = roh, empirical = TRUE)
+    
+    x_y_norm_sample <- x_y %>% 
+    # sample from the overall sample  with N_norm as defined above
+      sample_n(N_norm) 
+    
+    # extract x and y along with their lengths to make sure it is equal to N
+    x_norm <- x_y_norm_sample$X1 
+    y_norm <- x_y_norm_sample$X2
+      
+    x_y_local_sample <- x_y %>% 
+    # censor the sample, selecting on X to different degrees as defined above
+      filter(X1 > selection) %>% 
+    # sample from the censored samples with Ns as defined above
+      sample_n(N)
+
+    x_local_sample <- x_y_local_sample$X1 
+    y_local_sample <- x_y_local_sample$X2
+    
+  
+
+  # Our three statistical models predict well-being
+  results <- tibble(
+    sd_x = sd(x_local_sample),
+    sd_y = sd(y_local_sample),
+  # calculate correlations
+    r_raw = cor(x_local_sample, y_local_sample),
+    r_disattenuated = r_disattenuated(x_local_sample, y_local_sample, sd(x_norm)),
+    r_norm_standardised = b_normed(x_local_sample, y_local_sample, sd(x_norm), sd(y_norm,))
+  ) %>% 
+    bind_cols(Parameters, .)  %>% 
+    mutate(selection = case_when(
+      selection == 5 ~ "above average",
+      selection == 6 ~ "half an sd above average",
+      selection == 7 ~ "an sd above average",
+      TRUE ~ "none"
+    ))
+  
+}
+```
+
+
+### run simulations and save results
+```{r, eval = F}
+# sim_results = Scenarios %>%
+#   pmap(generate_data_and_calculate_r, .progress = T) %>%
+#   # Combine everything into a data frame
+#   bind_rows()
+
+# We ran this once 
+
+plan(multisession)
+sim_results <- Scenarios %>%
+  furrr::future_pmap(generate_data_and_calculate_r, .progress = T,
+                     .options = furrr::furrr_options(seed = 14)) %>%
+  # Combine everything into a data frame
+  bind_rows()
+
+
+write_rds(sim_results, "sim_results4.rds")
+
+```
+
+### load results and wrangle
+```{r}
+sim_results <- readRDS("sim_results4.rds")
+
+sim_results_long <- sim_results %>% 
+  pivot_longer(starts_with("r_"), names_to = "r_estimator", values_to = "r_estimate") %>% 
+  mutate(selection = factor(selection, levels =c ("none", "above average", "half an sd above average", "an sd above average")),
+         bias = r_estimate - roh)
+```
+
+
+
+
+## Bias plots
+### Norm standardised vs. disattenuated vs. raw
+#### faceted by selection and roh
+```{r, fig.width=8, fig.height=9}
+sim_results_long  %>% 
+  ggplot(aes(x = as.factor(N), y = bias, group = r_estimator, colour = r_estimator))  +
+  geom_line(stat = "summary") +
+  geom_pointrange(stat = "summary", fatten = 1) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dashed", size = 0.3),
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 9)
+  ) +
+  geom_line(y = 0, colour = "black") +
+  scale_colour_manual(values = c("#009e73", "#0072b2", "#e69f00")) +
+  labs(x = "N", y = "Bias") + 
+  facet_grid(rows = vars(selection), cols = vars(roh))
+```
+
+#### faceted by selection and N_norm
+```{r, fig.width=8, fig.height=9}
+sim_results_long  %>% 
+  ggplot(aes(x = as.factor(N), y = bias, group = r_estimator, colour = r_estimator))  +
+  geom_line(stat = "summary") +
+  geom_pointrange(stat = "summary", fatten = 1) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dashed", size = 0.3),
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 9)
+  ) +
+  geom_line(y = 0, colour = "black") +
+  scale_colour_manual(values = c("#009e73", "#0072b2", "#e69f00")) +
+  labs(x = "N", y = "Bias") + 
+  facet_grid(rows = vars(selection), cols = vars(N_norm))
+```
+
+
+#### across selection degrees and rohs
+```{r, fig.width=17/2, fig.height=17/4}
+sim_results_long  %>% 
+  ggplot(aes(x = as.factor(N), y = bias, group = r_estimator, colour = r_estimator))  +
+  geom_line(stat = "summary") +
+  geom_pointrange(stat = "summary", fatten = 1) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dashed", size = 0.3),
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 9)
+  ) +
+  geom_line(y = 0, colour = "black") +
+  scale_colour_manual(values = c("#009e73", "#0072b2", "#e69f00")) +
+  labs(x = "N", y = "Bias") + 
+  facet_grid(cols = vars(N_norm))
+```
+
+
+### Norm standardised vs. disattenuated
+#### faceted by selection and roh
+```{r, fig.width=8, fig.height=9}
+sim_results_long  %>% 
+  filter(r_estimator != "r_raw") %>% 
+  ggplot(aes(x = as.factor(N), y = bias, group = r_estimator, colour = r_estimator))  +
+  geom_line(stat = "summary") +
+  geom_pointrange(stat = "summary", fatten = 1) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dashed", size = 0.3),
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 9)
+  ) +
+  geom_line(y = 0, colour = "black") +
+  scale_colour_manual(values = c("#009e73", "#0072b2")) +
+  labs(x = "N", y = "Bias") + 
+  facet_grid(rows = vars(selection), cols = vars(roh))
+```
+
+
+#### faceted by selection and N_norm
+```{r, fig.width=8, fig.height=9}
+sim_results_long  %>% 
+  filter(r_estimator != "r_raw") %>% 
+  ggplot(aes(x = as.factor(N), y = bias, group = r_estimator, colour = r_estimator))  +
+  geom_line(stat = "summary") +
+  geom_pointrange(stat = "summary", fatten = 1) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dashed", size = 0.3),
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 9)
+  ) +
+  geom_line(y = 0, colour = "black") +
+  scale_colour_manual(values = c("#009e73", "#0072b2")) +
+  labs(x = "N", y = "Bias") + 
+  facet_grid(rows = vars(selection), cols = vars(N_norm))
+
+```
+
+#### across selection degrees and rohs
+```{r, fig.width=17/2, fig.height=17/4}
+sim_results_long  %>% 
+  filter(r_estimator != "r_raw") %>% 
+  ggplot(aes(x = as.factor(N), y = bias, group = r_estimator, colour = r_estimator))  +
+  geom_line(stat = "summary") +
+  geom_pointrange(stat = "summary", fatten = 1) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dashed", size = 0.3),
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 9)
+  ) +
+  geom_line(y = 0, colour = "black") +
+  scale_colour_manual(values = c("#009e73", "#0072b2")) +
+  labs(x = "N", y = "Bias") + 
+  facet_grid(rows = vars(selection), cols = vars(N_norm))
+```
+
+
+
+## SE plots
+### Norm standardised vs. disattenuated vs. raw
+#### faceted by selection and roh
+```{r, fig.width=8, fig.height=9}
+sim_results_long %>% 
+  group_by(N, roh, selection, r_estimator) %>%
+  summarise(
+    bias = mean(bias),
+    se = sqrt(sum((r_estimate - mean(r_estimate))^2) / (n() - 1)),
+    se = mean((r_estimate - roh)^2)) %>%
+  ggplot(aes(x = as.factor(N), y = se, group = r_estimator, colour = r_estimator))  +
+  geom_line() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dashed", size = 0.3),
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12)
+  ) +
+  geom_line(y = 0, colour = "black") +
+  scale_colour_manual(values = c("#009e73", "#0072b2", "#e69f00")) +
+  labs(x = "N", y = "SE") + 
+  facet_grid(rows = vars(selection), cols = vars(roh))
+```
+
+#### faceted by selection and N_norm
+```{r, fig.width=8, fig.height=9}
+sim_results_long %>% 
+  group_by(N, N_norm, selection, r_estimator) %>%
+  summarise(
+    bias = mean(bias),
+    se = sqrt(sum((r_estimate - mean(r_estimate))^2) / (n() - 1)),
+    se = mean((r_estimate - roh)^2)) %>%
+  ggplot(aes(x = as.factor(N), y = se, group = r_estimator, colour = r_estimator))  +
+  geom_line() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dashed", size = 0.3),
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12)
+  ) +
+  geom_line(y = 0, colour = "black") +
+  scale_colour_manual(values = c("#009e73", "#0072b2", "#e69f00")) +
+  labs(x = "N", y = "SE") + 
+  facet_grid(rows = vars(selection), cols = vars(N_norm))
+```
+
+#### across selection degrees and rohs
+```{r, fig.width=17/2, fig.height=17/4}
+ sim_results_long %>% 
+  group_by(N, N_norm, r_estimator) %>%
+  summarise(
+    bias = mean(r_estimate - roh),
+    se = mean((r_estimate - roh)^2),
+    se = sqrt(sum(r_estimate - mean(r_estimate))^2/(n()-1))
+  ) %>%
+  arrange(desc(abs(bias))) %>%
+  group_by()  %>% 
+  ggplot(aes(x = as.factor(N), y = se, group = r_estimator, colour = r_estimator))  +
+  geom_line() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dashed", size = 0.3),
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12)
+  ) +
+  geom_line(y = 0, colour = "black") +
+  scale_colour_manual(values = c("#009e73", "#0072b2", "#e69f00")) +
+  labs(x = "N", y = "SE") + 
+  facet_grid(cols = vars(N_norm))
+```
+
+### Norm standardised vs. disattenuated
+#### faceted by selection and roh
+```{r, fig.width=8, fig.height=9}
+sim_results_long %>% 
+  filter(r_estimator != "r_raw") %>%
+  group_by(N, roh, selection, r_estimator) %>%
+  summarise(
+    bias = mean(bias),
+    se = sqrt(sum((r_estimate - mean(r_estimate))^2) / (n() - 1)),
+    se = mean((r_estimate - roh)^2)) %>%
+  ggplot(aes(x = as.factor(N), y = se, group = r_estimator, colour = r_estimator))  +
+  geom_line() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dashed", size = 0.3),
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12)
+  ) +
+  geom_line(y = 0, colour = "black") +
+  scale_colour_manual(values = c("#009e73", "#0072b2")) +
+  labs(x = "N", y = "SE") + 
+  facet_grid(rows = vars(selection), cols = vars(roh))
+```
+
+#### faceted by selection and N_orm
+```{r, fig.width=8, fig.height=9}
+sim_results_long %>% 
+  filter(r_estimator != "r_raw") %>%
+  group_by(N, N_norm, selection, r_estimator) %>%
+  summarise(
+    bias = mean(bias),
+    se = sqrt(sum((r_estimate - mean(r_estimate))^2) / (n() - 1)),
+    se = mean((r_estimate - roh)^2)) %>%
+  ggplot(aes(x = as.factor(N), y = se, group = r_estimator, colour = r_estimator))  +
+  geom_line() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dashed", size = 0.3),
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12)
+  ) +
+  geom_line(y = 0, colour = "black") +
+  scale_colour_manual(values = c("#009e73", "#0072b2")) +
+  labs(x = "N", y = "SE") + 
+  facet_grid(rows = vars(selection), cols = vars(N_norm))
+```
+
+
+#### across selection degrees and rohs
+```{r, fig.width=17/2, fig.height=17/4}
+sim_results_long %>% 
+  filter(r_estimator != "r_raw") %>%
+  group_by(N, N_norm, r_estimator) %>%
+  summarise(
+    bias = mean(bias),
+    se = sqrt(sum((r_estimate - mean(r_estimate))^2) / (n() - 1)),
+    se = mean((r_estimate - roh)^2)) %>%
+  ggplot(aes(x = as.factor(N), y = se, group = r_estimator, colour = r_estimator))  +
+  geom_line() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dashed", size = 0.3),
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12)
+  ) +
+  geom_line(y = 0, colour = "black") +
+  scale_colour_manual(values = c("#009e73", "#0072b2")) +
+  labs(x = "N", y = "SE") + 
+  facet_grid(cols = vars(N_norm))
+```
+
+
+
+
+## MSE plots
+### Norm standardised vs. disattenuated vs. raw
+#### faceted by selection and roh
+```{r, fig.width=8, fig.height=9}
+sim_results_long %>% 
+  group_by(N, roh, selection, r_estimator) %>%
+  summarise(
+    bias = mean(bias),
+    se = sqrt(sum((r_estimate - mean(r_estimate))^2) / (n() - 1)),
+    MSE = mean((r_estimate - roh)^2)) %>%
+  ggplot(aes(x = as.factor(N), y = MSE, group = r_estimator, colour = r_estimator))  +
+  geom_line() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dashed", size = 0.3),
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12)
+  ) +
+  geom_line(y = 0, colour = "black") +
+  scale_colour_manual(values = c("#009e73", "#0072b2", "#e69f00")) +
+  labs(x = "N", y = "MSE") + 
+  facet_grid(rows = vars(selection), cols = vars(roh))
+```
+
+#### faceted by selection and N_norm
+```{r, fig.width=8, fig.height=9}
+sim_results_long %>% 
+  group_by(N, N_norm, selection, r_estimator) %>%
+  summarise(
+    bias = mean(bias),
+    se = sqrt(sum((r_estimate - mean(r_estimate))^2) / (n() - 1)),
+    MSE = mean((r_estimate - roh)^2)) %>%
+  ggplot(aes(x = as.factor(N), y = MSE, group = r_estimator, colour = r_estimator))  +
+  geom_line() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dashed", size = 0.3),
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12)
+  ) +
+  geom_line(y = 0, colour = "black") +
+  scale_colour_manual(values = c("#009e73", "#0072b2", "#e69f00")) +
+  labs(x = "N", y = "MSE") + 
+  facet_grid(rows = vars(selection), cols = vars(N_norm))
+```
+
+#### across selection degrees and rohs
+```{r, fig.width=17/2, fig.height=17/4}
+ sim_results_long %>% 
+  group_by(N, N_norm, r_estimator) %>%
+  summarise(
+    bias = mean(r_estimate - roh),
+    MSE = mean((r_estimate - roh)^2),
+    se = sqrt(sum(r_estimate - mean(r_estimate))^2/(n()-1))
+  ) %>%
+  arrange(desc(abs(bias))) %>%
+  group_by()  %>% 
+  ggplot(aes(x = as.factor(N), y = MSE, group = r_estimator, colour = r_estimator))  +
+  geom_line() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dashed", size = 0.3),
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12)
+  ) +
+  geom_line(y = 0, colour = "black") +
+  scale_colour_manual(values = c("#009e73", "#0072b2", "#e69f00")) +
+  labs(x = "N", y = "MSE") + 
+  facet_grid(cols = vars(N_norm))
+```
+
+### Norm standardised vs. disattenuated
+#### faceted by selection and roh
+```{r, fig.width=8, fig.height=9}
+sim_results_long %>% 
+  filter(r_estimator != "r_raw") %>%
+  group_by(N, roh, selection, r_estimator) %>%
+  summarise(
+    bias = mean(bias),
+    se = sqrt(sum((r_estimate - mean(r_estimate))^2) / (n() - 1)),
+    MSE = mean((r_estimate - roh)^2)) %>%
+  ggplot(aes(x = as.factor(N), y = MSE, group = r_estimator, colour = r_estimator))  +
+  geom_line() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dashed", size = 0.3),
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12)
+  ) +
+  geom_line(y = 0, colour = "black") +
+  scale_colour_manual(values = c("#009e73", "#0072b2")) +
+  labs(x = "N", y = "MSE") + 
+  facet_grid(rows = vars(selection), cols = vars(roh))
+```
+
+#### faceted by selection and N_orm
+```{r, fig.width=8, fig.height=9}
+sim_results_long %>% 
+  filter(r_estimator != "r_raw") %>%
+  group_by(N, N_norm, selection, r_estimator) %>%
+  summarise(
+    bias = mean(bias),
+    se = sqrt(sum((r_estimate - mean(r_estimate))^2) / (n() - 1)),
+    MSE = mean((r_estimate - roh)^2)) %>%
+  ggplot(aes(x = as.factor(N), y = MSE, group = r_estimator, colour = r_estimator))  +
+  geom_line() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dashed", size = 0.3),
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12)
+  ) +
+  geom_line(y = 0, colour = "black") +
+  scale_colour_manual(values = c("#009e73", "#0072b2")) +
+  labs(x = "N", y = "MSE") + 
+  facet_grid(rows = vars(selection), cols = vars(N_norm))
+```
+
+
+#### across selection degrees and rohs
+```{r, fig.width=17/2, fig.height=17/4}
+sim_results_long %>% 
+  filter(r_estimator != "r_raw") %>%
+  group_by(N, N_norm, r_estimator) %>%
+  summarise(
+    bias = mean(bias),
+    se = sqrt(sum((r_estimate - mean(r_estimate))^2) / (n() - 1)),
+    MSE = mean((r_estimate - roh)^2)) %>%
+  ggplot(aes(x = as.factor(N), y = MSE, group = r_estimator, colour = r_estimator))  +
+  geom_line() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dashed", size = 0.3),
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12)
+  ) +
+  geom_line(y = 0, colour = "black") +
+  scale_colour_manual(values = c("#009e73", "#0072b2")) +
+  labs(x = "N", y = "MSE") + 
+  facet_grid(cols = vars(N_norm))
+```
+
+
+
+
+
+
+
+
+
+
+
