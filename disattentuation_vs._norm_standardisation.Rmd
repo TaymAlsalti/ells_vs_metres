@@ -14,9 +14,10 @@ knitr::opts_chunk$set(
     error = TRUE
 )
 
+if (!require(groundhog)) install.packages("groundhog")
 
 groundhog::groundhog.library(c("tidyverse", "faux", "furrr"), 
-                             date = "2022-06-14") # older date to accomodate older R version on the R cluster
+                             date = "2022-06-14") # older date to accommodate older R version on the R cluster
 
 
 
@@ -25,9 +26,9 @@ theme_set(theme_bw(base_size = 12))
 ```
 
 
-## Set up 
+# Set up 
 
-### simulation parameters
+## simulation parameters
 ```{r}
 Scenarios = expand_grid(
     # norm sample size
@@ -36,7 +37,7 @@ Scenarios = expand_grid(
     N = c(25, 100, 175, 250, 500),
     # population correlation
     roh = c(.1, .3, .5, .7),
-    # degree of sample selection: above average, half an sd above average, an sd above average (stanine scale)
+    # degree of sample selection: none, above average, half an sd above average, an sd above average (stanine scale)
     selection = c(-999, 5, 6, 7),
     # Simulate each scenario 1000 times
     Simulation = 1:1000)
@@ -56,15 +57,8 @@ generate_data_and_calculate_r <- function(N_norm, N, roh, selection,
  r_obs/(u_x*sqrt(((1/u_x^2)-1)*r_obs^2+1))
   }
   
-  # function for calculating regression slope, equivalent to pop/norm standardisation since both sds = 1
-  b <- function(x, y) {
+  # function for norm standardising then calculating regression slope
 
-  N <- length(x)
-
- (N * sum(x * y) - sum(x) * sum(y)) / (N * sum(x^2) - sum(x)^2)
-  }
-  
-  
   b_normed <- function(x, y, sd_x, sd_y) {
 
   N <- length(x)
@@ -121,8 +115,8 @@ generate_data_and_calculate_r <- function(N_norm, N, roh, selection,
 ```
 
 
-### run simulations and save results
-```{r, eval = F}
+## run simulations and save results
+```{r, eval = FALSE}
 # sim_results = Scenarios %>%
 #   pmap(generate_data_and_calculate_r, .progress = T) %>%
 #   # Combine everything into a data frame
@@ -138,13 +132,13 @@ sim_results <- Scenarios %>%
   bind_rows()
 
 
-write_rds(sim_results, "sim_results4.rds")
+write_rds(sim_results, "sim_results.rds")
 
 ```
 
-### load results and wrangle
+## load results and prepare them for plotting
 ```{r}
-sim_results <- readRDS("sim_results4.rds")
+sim_results <- readRDS("sim_results.rds")
 
 sim_results_long <- sim_results %>% 
   pivot_longer(starts_with("r_"), names_to = "r_estimator", values_to = "r_estimate") %>% 
@@ -155,9 +149,9 @@ sim_results_long <- sim_results %>%
 
 
 
-## Bias plots
-### Norm standardised vs. disattenuated vs. raw
-#### faceted by selection and roh
+# Bias plots
+## Norm standardised vs. disattenuated vs. raw
+### faceted by selection and roh
 ```{r, fig.width=8, fig.height=9}
 sim_results_long  %>% 
   ggplot(aes(x = as.factor(N), y = bias, group = r_estimator, colour = r_estimator))  +
@@ -178,7 +172,7 @@ sim_results_long  %>%
   facet_grid(rows = vars(selection), cols = vars(roh))
 ```
 
-#### faceted by selection and N_norm
+### faceted by selection and N_norm
 ```{r, fig.width=8, fig.height=9}
 sim_results_long  %>% 
   ggplot(aes(x = as.factor(N), y = bias, group = r_estimator, colour = r_estimator))  +
@@ -200,7 +194,7 @@ sim_results_long  %>%
 ```
 
 
-#### across selection degrees and rohs
+### across selection degrees and rohs
 ```{r, fig.width=17/2, fig.height=17/4}
 sim_results_long  %>% 
   ggplot(aes(x = as.factor(N), y = bias, group = r_estimator, colour = r_estimator))  +
@@ -222,8 +216,8 @@ sim_results_long  %>%
 ```
 
 
-### Norm standardised vs. disattenuated
-#### faceted by selection and roh
+## Norm standardised vs. disattenuated
+### faceted by selection and roh
 ```{r, fig.width=8, fig.height=9}
 sim_results_long  %>% 
   filter(r_estimator != "r_raw") %>% 
@@ -246,7 +240,7 @@ sim_results_long  %>%
 ```
 
 
-#### faceted by selection and N_norm
+### faceted by selection and N_norm
 ```{r, fig.width=8, fig.height=9}
 sim_results_long  %>% 
   filter(r_estimator != "r_raw") %>% 
@@ -269,7 +263,7 @@ sim_results_long  %>%
 
 ```
 
-#### across selection degrees and rohs
+### across selection degrees and rohs
 ```{r, fig.width=17/2, fig.height=17/4}
 sim_results_long  %>% 
   filter(r_estimator != "r_raw") %>% 
@@ -288,21 +282,21 @@ sim_results_long  %>%
   geom_line(y = 0, colour = "black") +
   scale_colour_manual(values = c("#009e73", "#0072b2")) +
   labs(x = "N", y = "Bias") + 
-  facet_grid(rows = vars(selection), cols = vars(N_norm))
+  facet_grid(cols = vars(N_norm))
 ```
 
 
 
-## SE plots
-### Norm standardised vs. disattenuated vs. raw
-#### faceted by selection and roh
+# SE plots
+## Norm standardised vs. disattenuated vs. raw
+### faceted by selection and roh
 ```{r, fig.width=8, fig.height=9}
 sim_results_long %>% 
   group_by(N, roh, selection, r_estimator) %>%
   summarise(
     bias = mean(bias),
     se = sqrt(sum((r_estimate - mean(r_estimate))^2) / (n() - 1)),
-    se = mean((r_estimate - roh)^2)) %>%
+    MSE = mean((r_estimate - roh)^2)) %>%
   ggplot(aes(x = as.factor(N), y = se, group = r_estimator, colour = r_estimator))  +
   geom_line() +
   theme(
@@ -320,14 +314,14 @@ sim_results_long %>%
   facet_grid(rows = vars(selection), cols = vars(roh))
 ```
 
-#### faceted by selection and N_norm
+### faceted by selection and N_norm
 ```{r, fig.width=8, fig.height=9}
 sim_results_long %>% 
   group_by(N, N_norm, selection, r_estimator) %>%
   summarise(
     bias = mean(bias),
     se = sqrt(sum((r_estimate - mean(r_estimate))^2) / (n() - 1)),
-    se = mean((r_estimate - roh)^2)) %>%
+    MSE = mean((r_estimate - roh)^2)) %>%
   ggplot(aes(x = as.factor(N), y = se, group = r_estimator, colour = r_estimator))  +
   geom_line() +
   theme(
@@ -345,15 +339,14 @@ sim_results_long %>%
   facet_grid(rows = vars(selection), cols = vars(N_norm))
 ```
 
-#### across selection degrees and rohs
+### across selection degrees and rohs
 ```{r, fig.width=17/2, fig.height=17/4}
  sim_results_long %>% 
   group_by(N, N_norm, r_estimator) %>%
   summarise(
-    bias = mean(r_estimate - roh),
-    se = mean((r_estimate - roh)^2),
-    se = sqrt(sum(r_estimate - mean(r_estimate))^2/(n()-1))
-  ) %>%
+    bias = mean(bias),
+    se = sqrt(sum((r_estimate - mean(r_estimate))^2) / (n() - 1)),
+    MSE = mean((r_estimate - roh)^2)) %>%
   arrange(desc(abs(bias))) %>%
   group_by()  %>% 
   ggplot(aes(x = as.factor(N), y = se, group = r_estimator, colour = r_estimator))  +
@@ -373,8 +366,8 @@ sim_results_long %>%
   facet_grid(cols = vars(N_norm))
 ```
 
-### Norm standardised vs. disattenuated
-#### faceted by selection and roh
+## Norm standardised vs. disattenuated
+### faceted by selection and roh
 ```{r, fig.width=8, fig.height=9}
 sim_results_long %>% 
   filter(r_estimator != "r_raw") %>%
@@ -382,7 +375,7 @@ sim_results_long %>%
   summarise(
     bias = mean(bias),
     se = sqrt(sum((r_estimate - mean(r_estimate))^2) / (n() - 1)),
-    se = mean((r_estimate - roh)^2)) %>%
+    MSE = mean((r_estimate - roh)^2)) %>%
   ggplot(aes(x = as.factor(N), y = se, group = r_estimator, colour = r_estimator))  +
   geom_line() +
   theme(
@@ -400,7 +393,7 @@ sim_results_long %>%
   facet_grid(rows = vars(selection), cols = vars(roh))
 ```
 
-#### faceted by selection and N_orm
+### faceted by selection and N_orm
 ```{r, fig.width=8, fig.height=9}
 sim_results_long %>% 
   filter(r_estimator != "r_raw") %>%
@@ -408,7 +401,7 @@ sim_results_long %>%
   summarise(
     bias = mean(bias),
     se = sqrt(sum((r_estimate - mean(r_estimate))^2) / (n() - 1)),
-    se = mean((r_estimate - roh)^2)) %>%
+    MSE = mean((r_estimate - roh)^2)) %>%
   ggplot(aes(x = as.factor(N), y = se, group = r_estimator, colour = r_estimator))  +
   geom_line() +
   theme(
@@ -427,7 +420,7 @@ sim_results_long %>%
 ```
 
 
-#### across selection degrees and rohs
+### across selection degrees and rohs
 ```{r, fig.width=17/2, fig.height=17/4}
 sim_results_long %>% 
   filter(r_estimator != "r_raw") %>%
@@ -435,7 +428,7 @@ sim_results_long %>%
   summarise(
     bias = mean(bias),
     se = sqrt(sum((r_estimate - mean(r_estimate))^2) / (n() - 1)),
-    se = mean((r_estimate - roh)^2)) %>%
+    MSE = mean((r_estimate - roh)^2)) %>%
   ggplot(aes(x = as.factor(N), y = se, group = r_estimator, colour = r_estimator))  +
   geom_line() +
   theme(
@@ -456,9 +449,16 @@ sim_results_long %>%
 
 
 
-## MSE plots
-### Norm standardised vs. disattenuated vs. raw
-#### faceted by selection and roh
+
+
+
+
+
+
+
+# MSE plots
+## Norm standardised vs. disattenuated vs. raw
+### faceted by selection and roh
 ```{r, fig.width=8, fig.height=9}
 sim_results_long %>% 
   group_by(N, roh, selection, r_estimator) %>%
@@ -483,7 +483,7 @@ sim_results_long %>%
   facet_grid(rows = vars(selection), cols = vars(roh))
 ```
 
-#### faceted by selection and N_norm
+### faceted by selection and N_norm
 ```{r, fig.width=8, fig.height=9}
 sim_results_long %>% 
   group_by(N, N_norm, selection, r_estimator) %>%
@@ -508,7 +508,7 @@ sim_results_long %>%
   facet_grid(rows = vars(selection), cols = vars(N_norm))
 ```
 
-#### across selection degrees and rohs
+### across selection degrees and rohs
 ```{r, fig.width=17/2, fig.height=17/4}
  sim_results_long %>% 
   group_by(N, N_norm, r_estimator) %>%
@@ -536,8 +536,8 @@ sim_results_long %>%
   facet_grid(cols = vars(N_norm))
 ```
 
-### Norm standardised vs. disattenuated
-#### faceted by selection and roh
+## Norm standardised vs. disattenuated
+### faceted by selection and roh
 ```{r, fig.width=8, fig.height=9}
 sim_results_long %>% 
   filter(r_estimator != "r_raw") %>%
@@ -563,7 +563,7 @@ sim_results_long %>%
   facet_grid(rows = vars(selection), cols = vars(roh))
 ```
 
-#### faceted by selection and N_orm
+### faceted by selection and N_orm
 ```{r, fig.width=8, fig.height=9}
 sim_results_long %>% 
   filter(r_estimator != "r_raw") %>%
@@ -590,7 +590,7 @@ sim_results_long %>%
 ```
 
 
-#### across selection degrees and rohs
+### across selection degrees and rohs
 ```{r, fig.width=17/2, fig.height=17/4}
 sim_results_long %>% 
   filter(r_estimator != "r_raw") %>%
