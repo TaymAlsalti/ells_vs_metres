@@ -1,0 +1,229 @@
+---
+title: "MetaPsy demo"
+author: "Taym + Ruben"
+date: '`r Sys.Date()`'
+output: 
+  html_document:
+    number_sections: true
+    toc: true
+    toc_depth: 3
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(metafor)
+library(metapsyData) # devtools::install_github("metapsy-project/metapsyData") on 2026-01-15
+
+
+```
+
+
+
+# load and clean data
+
+```{r cars}
+# mp1 <- read_delim("data/raw/metapsy_dep.csv", 
+#                   delim = ";", escape_double = FALSE, trim_ws = TRUE) 
+
+# mp <- getData("depression-psyctr")$data # ran once to get the data (No to Zonedo token) 
+
+# write.csv(mp, "data/raw/metapsy_dep.csv")
+
+mp <- read.csv("data/raw/metapsy_dep.csv")
+
+
+cols_to_convert <- mp %>%
+  select(where(is.character)) %>%
+  names() %>%
+  keep(~ any(str_detect(mp[[.x]], "^[-]?[0-9]+[,][0-9]+$"), na.rm = TRUE))
+
+mp <- mp %>%
+  mutate(across(all_of(cols_to_convert), 
+                ~ as.numeric(str_replace(., ",", "."))))
+```
+
+```{r}
+mp %>% filter(outcome_type == "msd") %>% nrow()
+```
+
+810/900 studies have means and sds. 
+
+```{r}
+mp %>% group_by(instrument) %>% count() %>% arrange(-n)
+```
+
+95 phq 9 studies.
+
+```{r}
+mp_phq <- mp %>% filter(instrument == "phq-9" & complete.cases(mean_arm1, mean_arm2))
+```
+
+89 studies with sufficient data.
+
+# Helper function for norm-standardized SMD
+```{r}
+# Compute norm-standardized d with correct variance
+# Uses sample SDs to estimate SE of mean difference, but norm SD as standardizer
+calc_d_norm <- function(m1, m2, sd1, sd2, n1, n2, sd_norm) {
+  
+
+  # Raw mean difference
+  md <- m1 - m2
+  
+  # Norm-standardized d
+  d_norm <- md / sd_norm
+  
+ # Pooled sample SD (for estimating SE of mean difference)
+  sd_pooled <- sqrt(((n1 - 1) * sd1^2 + (n2 - 1) * sd2^2) / (n1 + n2 - 2))
+  
+  # SE of mean difference (using sample SD, not norm SD!)
+  se_md <- sd_pooled * sqrt(1/n1 + 1/n2)
+  
+  # Variance of d_norm - only reflects uncertainty in means, not in standardizer
+  var_d_norm <- (se_md / sd_norm)^2
+  
+  data.frame(yi = d_norm, vi = var_d_norm)
+}
+```
+
+# PHQ-9
+## Locally standardised MA (traditional approach)
+```{r}
+mp_phq9_local <- escalc(measure = "SMD",
+       n1i = n_arm1,
+       n2i = n_arm2,
+       m1i = mean_arm1,
+       m2i = mean_arm2,
+       sd1i = sd_arm1,
+       sd2i = sd_arm2,
+       data = mp_phq)
+
+rma_local <- rma.uni(yi = yi, vi = vi, data = mp_phq9_local)
+rma_local
+```
+
+
+## Norm-standardized MA (correct variance)
+```{r}
+# PHQ-9 norm SD from https://pmc.ncbi.nlm.nih.gov/articles/PMC2148236/#sec14
+sd_norm_phq9 <- 6.47
+
+# Compute norm-standardized d with correct variance
+norm_effects <- with(mp_phq, 
+  calc_d_norm(mean_arm1, mean_arm2, sd_arm1, sd_arm2, n_arm1, n_arm2, sd_norm_phq9)
+)
+
+mp_phq9_norm <- mp_phq %>% 
+  bind_cols(norm_effects)
+
+rma_norm <- rma.uni(yi = yi, vi = vi, data = mp_phq9_norm)
+rma_norm
+```
+
+### Compare: incorrect variance (using escalc with constant SD)
+```{r}
+# This is what the original code did - point estimate is correct but variance is wrong
+mp_phq9_wrong <- escalc(measure = "SMD",
+       n1i = n_arm1,
+       n2i = n_arm2,
+       m1i = mean_arm1,
+       m2i = mean_arm2,
+       sd1i = rep(sd_norm_phq9, nrow(mp_phq)),
+       sd2i = rep(sd_norm_phq9, nrow(mp_phq)),
+       data = mp_phq)
+
+rma_wrong <- rma.uni(yi = yi, vi = vi, data = mp_phq9_wrong)
+rma_wrong
+
+# Compare variances - the escalc approach inflates them
+cat("\n--- Variance comparison (first 5 studies) ---\n")
+cat("Correct (norm-standardized):", round(head(mp_phq9_norm$vi, 5), 4), "\n")
+cat("Incorrect (escalc with constant SD):", round(head(mp_phq9_wrong$vi, 5), 4), "\n")
+```
+
+## Summary comparison
+```{r}
+cat("=== Meta-analysis comparison ===\n\n")
+
+cat("Local (sample-standardized):\n")
+cat(sprintf("  d = %.3f [%.3f, %.3f], tau² = %.4f, I² = %.1f%%\n\n",
+            coef(rma_local), rma_local$ci.lb, rma_local$ci.ub, 
+            rma_local$tau2, rma_local$I2))
+
+cat("Norm-standardized (correct variance):\n")
+cat(sprintf("  d = %.3f [%.3f, %.3f], tau² = %.4f, I² = %.1f%%\n\n",
+            coef(rma_norm), rma_norm$ci.lb, rma_norm$ci.ub,
+            rma_norm$tau2, rma_norm$I2))
+
+cat("Norm-standardized (incorrect variance via escalc):\n")
+cat(sprintf("  d = %.3f [%.3f, %.3f], tau² = %.4f, I² = %.1f%%\n",
+            coef(rma_wrong), rma_wrong$ci.lb, rma_wrong$ci.ub,
+            rma_wrong$tau2, rma_wrong$I2))
+```
+
+## Scatter plot: local vs norm-standardized
+```{r, fig.width=7, fig.height=7}
+mp_phq9_all <- mp_phq9_local %>% 
+  rename(d_local = yi, vi_local = vi) %>% 
+  bind_cols(select(mp_phq9_norm, d_norm = yi, vi_norm = vi))
+
+ggplot(mp_phq9_all, aes(d_local, d_norm)) +
+  geom_abline(slope = 1, linetype = "dotted") +
+  geom_point(size = 2.25) +
+  theme_classic(base_family = "Times", base_size = 12) +
+  labs(
+    x = "Locally standardised SMD",
+    y = "Norm-standardised SMD"
+  ) +
+  annotate("text", x = -1, y = 0, size = 4, 
+           label = "Sample SD < norm SD\n(locally inflated SMD)", family = "Times") +
+  annotate("text", x = -1, y = -2, size = 4, 
+           label = "Sample SD > norm SD\n(locally deflated SMD)", family = "Times")
+```
+
+# BDI-1 analysis
+```{r}
+mp_bdi1 <- mp %>% filter(instrument == "bdi-1" & complete.cases(sd_arm1, sd_arm2, mean_arm1, mean_arm2))
+
+# You'd want to get this from a normative study, not from the meta-analytic sample
+# Using pooled estimate from sample as placeholder - replace with actual norm
+sd_norm_bdi1 <- mp_bdi1 %>%
+  summarise(
+    pooled_sd = sqrt(sum((n_arm1 - 1) * sd_arm1^2 + (n_arm2 - 1) * sd_arm2^2) / 
+                     sum(n_arm1 + n_arm2 - 2))
+  ) %>%
+  pull(pooled_sd)
+
+cat("BDI-1 pooled SD from sample:", round(sd_norm_bdi1, 2), "\n")
+cat("(Replace this with an external norm SD for the actual analysis)\n\n")
+```
+
+```{r}
+# Local standardization
+mp_bdi1_local <- escalc(measure = "SMD",
+       n1i = n_arm1, n2i = n_arm2,
+       m1i = mean_arm1, m2i = mean_arm2,
+       sd1i = sd_arm1, sd2i = sd_arm2,
+       data = mp_bdi1)
+
+rma_bdi1_local <- rma.uni(yi = yi, vi = vi, data = mp_bdi1_local)
+
+# Norm standardization (correct variance)
+norm_effects_bdi1 <- with(mp_bdi1,
+  calc_d_norm(mean_arm1, mean_arm2, sd_arm1, sd_arm2, n_arm1, n_arm2, sd_norm_bdi1)
+)
+
+mp_bdi1_norm <- mp_bdi1 %>% bind_cols(norm_effects_bdi1)
+rma_bdi1_norm <- rma.uni(yi = yi, vi = vi, data = mp_bdi1_norm)
+
+cat("BDI-1: Local standardization\n")
+print(rma_bdi1_local)
+
+cat("\nBDI-1: Norm standardization\n
+")
+print(rma_bdi1_norm)
+```
+
+
