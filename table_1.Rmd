@@ -71,12 +71,30 @@ cor(pop$SB, pop$mood)
 ```
 
 ```{r}
+cor(random_sample$SB, random_sample$mood)
+```
+
+
+```{r}
 cor(high_SB_sample$SB, high_SB_sample$mood)
 ```
 
 ```{r}
-cor(random_sample$SB, random_sample$mood)
+b_normed <- function(x, y, sd_x, sd_y) {
+
+  N <- length(x)
+  normed_x <- x/sd_x
+  normed_y <- y/sd_y
+  
+
+ (N * sum(normed_x * normed_y) - sum(normed_x) * sum(normed_y)) / (N * sum(normed_x^2) - sum(normed_x)^2)
+}
+
+b_normed(high_SB_sample$SB, high_SB_sample$mood, sd(random_sample$SB), sd(random_sample$mood,))
 ```
+
+
+
 
 
 

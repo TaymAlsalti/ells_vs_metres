@@ -1551,10 +1551,22 @@ old_table1</code></pre>
 <h2>correlations</h2>
 <pre class="r"><code>cor(pop$SB, pop$mood)</code></pre>
 <pre><code>## [1] 0.6672</code></pre>
-<pre class="r"><code>cor(high_SB_sample$SB, high_SB_sample$mood)</code></pre>
-<pre><code>## [1] 0.5294</code></pre>
 <pre class="r"><code>cor(random_sample$SB, random_sample$mood)</code></pre>
 <pre><code>## [1] 0.6475</code></pre>
+<pre class="r"><code>cor(high_SB_sample$SB, high_SB_sample$mood)</code></pre>
+<pre><code>## [1] 0.5294</code></pre>
+<pre class="r"><code>b_normed &lt;- function(x, y, sd_x, sd_y) {
+
+  N &lt;- length(x)
+  normed_x &lt;- x/sd_x
+  normed_y &lt;- y/sd_y
+  
+
+ (N * sum(normed_x * normed_y) - sum(normed_x) * sum(normed_y)) / (N * sum(normed_x^2) - sum(normed_x)^2)
+}
+
+b_normed(high_SB_sample$SB, high_SB_sample$mood, sd(random_sample$SB), sd(random_sample$mood,))</code></pre>
+<pre><code>## [1] 0.6248</code></pre>
 </div>
 
 
