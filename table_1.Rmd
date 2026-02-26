@@ -20,16 +20,16 @@ library(tidyverse)
 options(digits = 4, scipen = 999)
 ```
 
-
+## tables
 ```{r}
 
 
 set.seed(810)
 N <- 1000000
 pop <- tibble(
-  con = rnorm(N, 5, 2),
+  SB = rnorm(N, 5, 2),
   sex = rbinom(N, 1, 0.5),
-  soc = rnorm(N, 5, 2) + con + 2*sex,
+  mood = rnorm(N, 5, 2) + SB + 2*sex,
 )
 
 
@@ -38,25 +38,25 @@ pop <- tibble(
 random_sample <- sample_n(pop, 140)
 
 # 4. Create a Biased Sample (skews overeducated/conscientious)
-high_con_sample <- pop %>% filter(con > 4) %>% sample_n(140)
+high_SB_sample <- pop %>% filter(SB > 4) %>% sample_n(140)
 
 
 
 old_table1 <- tribble(
   ~Sample,       ~Measure,                 ~Mean,                          ~SD,
-  "Random",      "concientiousness",       mean(random_sample$con) ,         sd(random_sample$con),     
-  "Random",      "pro sociality",          mean(random_sample$soc),         sd(random_sample$soc),
-  "Biassed",     "concientiousness",       mean(high_con_sample$con) ,         sd(high_con_sample$con),     
-  "Biassed",     "pro sociality",          mean(high_con_sample$soc),         sd(high_con_sample$soc)
+  "Random",      "social belonging",       mean(random_sample$SB) ,          sd(random_sample$SB),     
+  "Random",      "mood",                   mean(random_sample$mood),         sd(random_sample$mood),
+  "Biassed",     "social belonging",       mean(high_SB_sample$SB) ,         sd(high_SB_sample$SB),     
+  "Biassed",     "mood",                   mean(high_SB_sample$mood),        sd(high_SB_sample$mood)
 )
 
 new_table1 <- old_table1 %>% 
   bind_cols(tribble(
   ~"Normed mean",                                             ~"Normed SD",
-   (mean(random_sample$con) -   mean(pop$con)) / sd(pop$con),  sd(random_sample$con) /   sd(pop$con),     
-   (mean(random_sample$soc) -   mean(pop$soc)) / sd(pop$soc),  sd(random_sample$soc) /   sd(pop$soc),     
-   (mean(high_con_sample$con) - mean(pop$con)) / sd(pop$con),  sd(high_con_sample$con) / sd(pop$con),     
-   (mean(high_con_sample$soc) - mean(pop$soc)) / sd(pop$soc),  sd(high_con_sample$soc) / sd(pop$soc)      
+   (mean(random_sample$SB)    -   mean(pop$SB))   / sd(pop$SB),    sd(random_sample$SB)    /   sd(pop$SB),     
+   (mean(random_sample$mood)  -   mean(pop$mood)) / sd(pop$mood),  sd(random_sample$mood)  /   sd(pop$mood),     
+   (mean(high_SB_sample$SB)   -   mean(pop$SB))   / sd(pop$SB),    sd(high_SB_sample$SB)   /   sd(pop$SB),     
+   (mean(high_SB_sample$mood) -   mean(pop$mood)) / sd(pop$mood),  sd(high_SB_sample$mood) /   sd(pop$mood)      
 ))
 
 old_table1
@@ -64,3 +64,20 @@ old_table1
 new_table1 
 
 ```
+
+## correlations
+```{r}
+cor(pop$SB, pop$mood)
+```
+
+```{r}
+cor(high_SB_sample$SB, high_SB_sample$mood)
+```
+
+```{r}
+cor(random_sample$SB, random_sample$mood)
+```
+
+
+
+
