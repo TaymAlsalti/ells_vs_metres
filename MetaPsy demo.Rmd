@@ -138,25 +138,31 @@ cat(sprintf("  d = %.3f [%.3f, %.3f], tau² = %.4f, I² = %.1f%%\n\n",
 ```
 
 ## Scatter plot: local vs norm-standardised
-```{r, fig.width=7, fig.height=7}
+```{r, fig.width=7, fig.height=7, warning=FALSE}
 mp_phq9_all <- mp_phq9_local %>% 
   rename(d_local = yi, vi_local = vi) %>% 
   bind_cols(select(mp_phq9_norm, d_norm = yi, vi_norm = vi))
 
-ggplot(mp_phq9_all, aes(d_local, d_norm, ymin = d_norm - vi_norm, ymax = d_norm + vi_norm)) +
+ggplot(mp_phq9_all, aes(d_local, d_norm)) +
   geom_abline(slope = 1, linetype = "dotted") +
-  geom_errorbarh(aes(xmin = d_local - vi_local, xmax = d_local + vi_local), alpha = 0.5, width = 0) +
-  geom_linerange(alpha = 0.5) +
-  coord_fixed() +
+  geom_errorbarh(aes(xmin = d_local - sqrt(vi_local), 
+                     xmax = d_local + sqrt(vi_local)), 
+                alpha = 0.5, height = 0) +
+  geom_errorbar(aes(ymin = d_norm - sqrt(vi_norm), 
+                    ymax = d_norm + sqrt(vi_norm)), 
+               alpha = 0.5, width = 0) +
   geom_point(size = 2) +
+  coord_fixed() +
   theme_classic(base_family = "Times", base_size = 12) +
   labs(
     x = "Locally standardised mean difference",
     y = "Norm-standardised mean difference"
   ) +
   annotate("text", x = -1, y = 0, size = 4, 
-           label = "Sample SD < norm SD\n(locally inflated SMD)", family = "Times") +
+           label = "Sample SD < norm SD\n(locally inflated SMD)", 
+           family = "Times") +
   annotate("text", x = -1, y = -2, size = 4, 
-           label = "Sample SD > norm SD\n(locally deflated SMD)", family = "Times")
+           label = "Sample SD > norm SD\n(locally deflated SMD)", 
+           family = "Times")
 ```
 
